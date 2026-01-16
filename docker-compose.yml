@@ -1,0 +1,83 @@
+services:
+  # ===========================================
+  # BASE DE DONNÉES POSTGRESQL
+  # ===========================================
+  db:
+    image: postgres:16-alpine
+    container_name: anchorless_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-anchorless}
+      POSTGRES_USER: ${DB_USERNAME:-anchorless}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-anchorless} -d ${DB_DATABASE:-anchorless}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===========================================
+  # BACKEND LARAVEL (PHP-FPM)
+  # ===========================================
+  backend:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: anchorless_backend
+    restart: unless-stopped
+    working_dir: /var/www/html
+    volumes:
+      - ./backend:/var/www/html
+      - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini
+    environment:
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-anchorless}
+      DB_USERNAME: ${DB_USERNAME:-anchorless}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ===========================================
+  # NGINX (Reverse Proxy)
+  # ===========================================
+  nginx:
+    image: nginx:alpine
+    container_name: anchorless_nginx
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    volumes:
+      - ./backend:/var/www/html
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - backend
+
+  # ===========================================
+  # FRONTEND REMIX
+  # ===========================================
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/node/Dockerfile
+    container_name: anchorless_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      API_URL: http://nginx:80/api
+      PUBLIC_API_URL: http://localhost:8000/api
+    depends_on:
+      - nginx
+
+volumes:
+  postgres_data:
